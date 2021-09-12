@@ -1,17 +1,21 @@
-import pandas as pd
-import spacy
+import spacy_stanza
 import pyinflect
 
 class POVTransformer:
-    fp_contrct_list = ("'m",)
-    sp_contrct_list = ("'re",)
+    fp_contrct_list = ("'m", "'ve")
+    sp_contrct_list = ("'re", "'ve")
+    tp_contrct_list = ("'s", "'s")
+    tpn_contrct_list = ("'re", "'ve")
     fp_list = ('i', 'me', 'my', 'mine', 'myself', 'we', 'us', 'our', 'ours', 'ourselves')
     sp_list = ('you', 'you', 'your', 'yours', 'yourself', 'you', 'you', 'your', 'yours', 'yourselves')
+    tpm_list = ('he', 'him', 'his', 'his', 'himself', 'they', 'them', 'theirs', 'theirs', 'themselves')
+    tpf_list = ('she', 'her', 'her', 'hers', 'herself', 'they', 'them', 'theirs', 'theirs', 'themselves')
+    tpn_list = ('they', 'them', 'their', 'theirs', 'themselves', 'they', 'them', 'their', 'theirs', 'themselves')
 
-    def __init__(self, spacy_model_name="en_core_web_sm"):
+    def __init__(self):
         self.transformation_dict = None
         self.contraction_transformation_dict = None
-        self.nlp = spacy.load(spacy_model_name)
+        self.nlp = spacy_stanza.load_pipeline("en", verbose=False)
 
     def _is_not_3rd_person_parent(self, token):
         for c in token.children:
@@ -69,10 +73,9 @@ class POVTransformer:
     def transform(self, sentence):
         pass
 
-
 class FPtoSPTransformer(POVTransformer):
-    def __init__(self, spacy_model_name="en_core_web_sm"):
-        super().__init__(spacy_model_name)
+    def __init__(self):
+        super().__init__()
         self.transformation_dict = {fp: sp for fp, sp in zip(self.fp_list, self.sp_list)}
         self.contraction_transformation_dict = {fp: sp for fp, sp in zip(self.fp_contrct_list, self.sp_contrct_list)}
         # we unfortunately need a flag for if the last token was a fp one
@@ -138,8 +141,8 @@ class FPtoSPTransformer(POVTransformer):
 
 
 class SPtoFPSingularTransformer(POVTransformer):
-    def __init__(self, spacy_model_name="en_core_web_sm"):
-        super().__init__(spacy_model_name)
+    def __init__(self):
+        super().__init__()
         self.transformation_set = set(('you', 'you', 'your', 'yours', 'yourself'))
         self.contraction_transformation_set = set(self.sp_contrct_list)
         self.transformation_dict = {'you': {'subj': 'I', 'obj': 'me'}, 'your': 'my', 'yours': 'mine',
@@ -190,7 +193,7 @@ class SPtoFPSingularTransformer(POVTransformer):
                             dep = 'subj'
                     except KeyError:
                         dep = 'subj'
-                elif 'obj' in token.dep_:
+                elif 'ob' in token.dep_:
                     dep = 'obj'
                 else:
                     raise Exception(f'Token {token} dep_ is {token.dep_} not subj or obj.')
@@ -226,8 +229,8 @@ class SPtoFPSingularTransformer(POVTransformer):
 
 
 class SPtoFPPluralTransformer(POVTransformer):
-    def __init__(self, spacy_model_name="en_core_web_sm"):
-        super().__init__(spacy_model_name)
+    def __init__(self):
+        super().__init__()
         self.transformation_set = set(('you', 'you', 'your', 'yours', 'yourself'))
         self.transformation_dict = {'you': {'subj': 'we', 'obj': 'us'}, 'your': 'our', 'yours': 'ours',
                                     'yourselves': 'ourselves'}
@@ -281,6 +284,166 @@ class SPtoFPPluralTransformer(POVTransformer):
             text = self._cleanup_transformed_text(text, token, is_pronoun=True)
         # if the token to the left was a first person, we may need to transform the token
         elif self._is_in_left_list(token, self.transformation_set) or self.last_token_flag:
+            text = self._process_following_token(token)
+            text = self._cleanup_transformed_text(text, token, is_pronoun=False)
+        else:
+            # preserve capitilization
+            text = token.text
+        return text
+
+    def transform(self, sentence, exclude_quotes=True):
+        # transform to spacy doc
+        doc = self.nlp(sentence)
+        new_text = ''
+        include_token_flag = True
+        # loop through all the tokens in a doc
+        for token in doc:
+            if exclude_quotes:
+                if token.is_quote:
+                    include_token_flag = not include_token_flag
+            if include_token_flag:
+                text = self._get_transformed_token_text(token)
+            else:
+                text = token.text
+            new_text += text + token.whitespace_
+        return new_text
+
+
+class FPtoTPTransformer(POVTransformer):
+    """ Base class for third person transformers. """
+
+    def __init__(self):
+        super().__init__()
+        self.transformation_set = None
+        self.transformation_dict = None
+        self.contraction_transformation_set = None
+        self.contraction_transformation_dict = None
+        # we unfortunately need a flag for if the last token was a sp one
+        # because for some reason the left thing doesn't work
+        self.last_token_flag = False
+
+    #### TODO
+    def _inflect_3rd_person(self, token):
+        text = token.text.lower()
+        if token.tag_ == 'VBP':
+            inflection = token._.inflect('VBZ')
+            if inflection is not None:
+                text = inflection
+        return text
+
+    def _process_following_token(self, token):
+        text = token.text.lower()
+        # contraction transformation
+        if text in self.contraction_transformation_set:
+            text = self.contraction_transformation_dict[text]
+        # inflection transformation
+        elif token.lemma_ == 'be' or token.lemma_ == 'have':
+            text = self._inflect_3rd_person(token)
+        elif token.tag_ == 'VBP':
+            text = self._inflect_3rd_person(token)
+        return text
+
+    def _cleanup_transformed_text(self, text, token, is_pronoun):
+        # We set the last token flag for the next token
+        self.last_token_flag = is_pronoun
+        # try and preserve original token's capitilization
+        if text == token.text.lower():
+            # no transformation has taken place
+            text = token.text
+        else:
+            text = self._apply_capitilization(text, token)
+        return text
+
+    def _get_transformed_token_text(self, token):
+        text = token.text.lower()
+        # if text is in list and token in pronoun, transform it to f person
+        if text in self.transformation_set and not (token.text.lower() == 'us' and token.pos_ == 'PROPN'):
+            text = self.transformation_dict[text]
+            text = self._cleanup_transformed_text(text, token, is_pronoun=True)
+        # if the token to the left was a first person, we may need to transform the token
+        elif self._is_in_left_list(token, self.transformation_set) or self.last_token_flag:
+            text = self._process_following_token(token)
+            text = self._cleanup_transformed_text(text, token, is_pronoun=False)
+        else:
+            # preserve capitilization
+            text = token.text
+        return text
+
+    def transform(self, sentence, exclude_quotes=True):
+        # transform to spacy doc
+        doc = self.nlp(sentence)
+        new_text = ''
+        include_token_flag = True
+        # loop through all the tokens in a doc
+        for token in doc:
+            if exclude_quotes:
+                if token.is_quote:
+                    include_token_flag = not include_token_flag
+            if include_token_flag:
+                text = self._get_transformed_token_text(token)
+            else:
+                text = token.text
+            new_text += text + token.whitespace_
+        return new_text
+
+class FPtoTPMasculineTransformer(FPtoTPTransformer):
+    def __init__(self):
+        super().__init__()
+        self.transformation_set = set(self.fp_list)
+        self.transformation_dict = {fp: tp for fp, tp in zip(self.fp_list, self.tpm_list)}
+        self.contraction_transformation_set = set(self.fp_contrct_list)
+        self.contraction_transformation_dict = {fp: tp for fp, tp in zip(self.fp_contrct_list, self.tp_contrct_list)}
+
+class FPtoTPFeminineTransformer(FPtoTPTransformer):
+    def __init__(self):
+        super().__init__()
+        self.transformation_set = set(self.fp_list)
+        self.transformation_dict = {fp: tp for fp, tp in zip(self.fp_list, self.tpf_list)}
+        self.contraction_transformation_set = set(self.fp_contrct_list)
+        self.contraction_transformation_dict = {fp: tp for fp, tp in zip(self.fp_contrct_list, self.tp_contrct_list)}
+
+
+class FPtoTPNeutralTransformer(FPtoTPTransformer):
+    def __init__(self):
+        super().__init__()
+        self.transformation_set = set(self.fp_list)
+        self.transformation_dict = {fp: tp for fp, tp in zip(self.fp_list, self.tpn_list)}
+        self.contraction_transformation_set = set(self.fp_contrct_list)
+        self.contraction_transformation_dict = {fp: tp for fp, tp in zip(self.fp_contrct_list, self.tpn_contrct_list)}
+
+    def _process_following_token(self, token):
+        text = token.text.lower()
+        # contraction transformation
+        if text in self.fp_contrct_list:
+            text = self.contraction_transformation_dict[text]
+            return text
+        # inflection transformation
+        elif token.lemma_ == 'be':
+            if token.is_alpha:
+                if self._is_not_3rd_person_parent(token):
+                    text = self._inflect_token(token)
+                    return text
+        return text
+
+    def _cleanup_transformed_text(self, text, token, is_pronoun):
+        # We set the last token flag for the next token
+        self.last_token_flag = is_pronoun
+        # try and preserve original token's capitilization
+        if text == token.text.lower():
+            # no transformation has taken place
+            text = token.text
+        else:
+            text = self._apply_capitilization(text, token)
+        return text
+
+    def _get_transformed_token_text(self, token):
+        text = token.text.lower()
+        # if text is in list and token in pronoun, transform it to second person
+        if text in self.fp_list and not (token.text.lower() == 'us' and token.pos_ == 'PROPN'):
+            text = self.transformation_dict[text]
+            text = self._cleanup_transformed_text(text, token, is_pronoun=True)
+        # if the token to the left was a first person, we may need to transform the token
+        elif self._is_in_left_list(token, self.fp_list) or self.last_token_flag:
             text = self._process_following_token(token)
             text = self._cleanup_transformed_text(text, token, is_pronoun=False)
         else:
