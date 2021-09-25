@@ -350,7 +350,6 @@ class SPtoTPNeutralTransformer(SecondPersonTransformer):
 
 
 ### Third Person Transformers ###
-#TODO: create third person transformer
 class ThirdPersonTransformer(POVTransformer):
     """ Base class for First person transformers"""
     def __init__(self):
@@ -374,19 +373,7 @@ class ThirdPersonTransformer(POVTransformer):
             # preserve capitilization
             text = token.text
         return text
-
-
-### Third Person Transformers ###
-class TPMtoFPTransformer(ThirdPersonTransformer):
-    """ Base class for First person transformers"""
-    def __init__(self):
-        super().__init__()
-        self.transformation_set = set(self.tpm_list)
-        self.transformation_dict = {tpm: fp for tpm, fp in zip(self.tpm_list, self.fp_list)}
-        #don't need to transform plural contractions
-        self.contraction_transformation_set = set(self.tp_contrct_list + self.tpp_contrct_list)
-        self.contraction_transformation_dict = {"'s": {'root': "'ve", 'cop': "'m"}, "'re":"'re", "'ve":"'ve"}
-        
+    
     def _perform_inflection_transformation(self, token, text):
         if (text not in self.contraction_transformation_set \
             and token.text.lower() not in self.contraction_transformation_set) and \
@@ -408,3 +395,26 @@ class TPMtoFPTransformer(ThirdPersonTransformer):
             else:
                 text = self.contraction_transformation_dict[text]
         return text
+
+
+### Third Person Transformers ###
+class TPMtoFPTransformer(ThirdPersonTransformer):
+    """ Base class for First person transformers"""
+    def __init__(self):
+        super().__init__()
+        self.transformation_set = set(self.tpm_list)
+        self.transformation_dict = {tpm: fp for tpm, fp in zip(self.tpm_list, self.fp_list)}
+        #don't need to transform plural contractions
+        self.contraction_transformation_set = set(self.tp_contrct_list + self.tpp_contrct_list)
+        self.contraction_transformation_dict = {"'s": {'root': "'ve", 'cop': "'m"}, "'re":"'re", "'ve":"'ve"}
+
+### Third Person Transformers ###
+class TPMtoSPTransformer(ThirdPersonTransformer):
+    """ Base class for First person transformers"""
+    def __init__(self):
+        super().__init__()
+        self.transformation_set = set(self.tpm_list)
+        self.transformation_dict = {tpm: sp for tpm, sp in zip(self.tpm_list, self.sp_list)}
+        #don't need to transform plural contractions
+        self.contraction_transformation_set = set(self.tp_contrct_list + self.tpp_contrct_list)
+        self.contraction_transformation_dict = {"'s": {'root':"'ve" , 'cop':"'re"}, "'re":"'re", "'ve":"'ve"}
